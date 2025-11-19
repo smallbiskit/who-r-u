@@ -1,72 +1,55 @@
 import express from "express";
 import fs from "fs";
 import path from "path";
-import axios from "axios";
+import nodemailer from "nodemailer";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Telegram bot env vars (set these in Render)
-const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+// Email configuration
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS
+  }
+});
 
-// Ensure log directory exists for Render local environment
 const logDir = path.join(process.cwd(), "logs");
-if (!fs.existsSync(logDir)) {
-    fs.mkdirSync(logDir);
-}
+if (!fs.existsSync(logDir)) fs.mkdirSync(logDir);
 
 const logFile = path.join(logDir, "ips.log");
 
-// Function to send IP to Telegram
-async function sendToTelegram(msg) {
-    if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
-
-    const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
-
-    try {
-        await axios.post(url, {
-            chat_id: TELEGRAM_CHAT_ID,
-            text: msg,
-            parse_mode: "HTML"
-        });
-    } catch (err) {
-        console.error("Telegram error:", err.response?.data || err.message);
-    }
+async function sendEmail(subject, text) {
+  try {
+    await transporter.sendMail({
+      from: process.env.EMAIL_USER,
+      to: process.env.EMAIL_USER, // send to yourself
+      subject,
+      text
+    });
+  } catch (err) {
+    console.error("Email error:", err);
+  }
 }
 
-app.get("/", (req, res) => {
-    const ip =
-        req.headers["x-forwarded-for"]?.split(",")[0] ||
-        req.socket.remoteAddress ||
-        "unknown";
+app.get("/", async (req, res) => {
+  const ip = req.headers["x-forwarded-for"]?.split(",")[0] || req.socket.remoteAddress || "unknown";
+  const ua = req.headers["user-agent"] || "unknown";
+  const timestamp = new Date().toISOString();
 
-    const ua = req.headers["user-agent"] || "unknown";
+  const logLine = `${timestamp} - IP: ${ip} - UA: ${ua}\n`;
 
-    const timestamp = new Date().toISOString();
+  // Save to local log file
+  fs.appendFileSync(logFile, logLine);
 
-    const logLine = `${timestamp} - IP: ${ip} - UA: ${ua}\n`;
+  // Send email
+  await sendEmail("New Visitor Logged", logLine);
 
-    // Write to local log file (Render ephemeral, but OK)
-    fs.appendFileSync(logFile, logLine);
-
-    // Make a nice pretty Telegram message
-    const telegramMessage = `
-🔥 <b>New Visitor Logged</b>
-
-🌐 <b>IP:</b> <code>${ip}</code>
-📱 <b>Device:</b> ${ua}
-⏰ <b>Time:</b> ${timestamp}
-`;
-
-    sendToTelegram(telegramMessage);
-
-    res.send(`
-        <h1>y r u checking my truecaller profile</h1>
-        <p>🤣</p>
-    `);
+  res.send(`
+    <h1>y r u checking my truecaller profile</h1>
+    <p>🤣</p>
+  `);
 });
 
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
