@@ -1,71 +1,72 @@
-const express = require("express");
-const fs = require("fs");
-const path = require("path");
-const axios = require("axios");
+import express from "express";
+import fs from "fs";
+import path from "path";
+import axios from "axios";
 
 const app = express();
-
-const logFilePath = path.join(__dirname, "logs", "ips.log");
 const PORT = process.env.PORT || 3000;
 
-// Make sure logs folder exists
-if (!fs.existsSync(path.join(__dirname, "logs"))) {
-    fs.mkdirSync(path.join(__dirname, "logs"));
+// Telegram bot env vars (set these in Render)
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+
+// Ensure log directory exists for Render local environment
+const logDir = path.join(process.cwd(), "logs");
+if (!fs.existsSync(logDir)) {
+    fs.mkdirSync(logDir);
 }
 
-// Function to log to file
-function logToFile(text) {
-    fs.appendFile(logFilePath, text + "\n", (err) => {
-        if (err) console.error("Error writing log:", err);
-    });
-}
+const logFile = path.join(logDir, "ips.log");
 
-app.get("/", async (req, res) => {
-    let ip =
-        req.headers["x-forwarded-for"] ||
-        req.connection.remoteAddress ||
-        req.socket.remoteAddress;
+// Function to send IP to Telegram
+async function sendToTelegram(msg) {
+    if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
 
-    // normalize IPv6 localhost
-    if (ip === "::1" || ip === "127.0.0.1") {
-        ip = "LOCALHOST";
-    } else if (ip.includes("::ffff:")) {
-        ip = ip.replace("::ffff:", "");
+    const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
+
+    try {
+        await axios.post(url, {
+            chat_id: TELEGRAM_CHAT_ID,
+            text: msg,
+            parse_mode: "HTML"
+        });
+    } catch (err) {
+        console.error("Telegram error:", err.response?.data || err.message);
     }
+}
 
-    const ua = req.headers["user-agent"] || "Unknown Device";
+app.get("/", (req, res) => {
+    const ip =
+        req.headers["x-forwarded-for"]?.split(",")[0] ||
+        req.socket.remoteAddress ||
+        "unknown";
+
+    const ua = req.headers["user-agent"] || "unknown";
+
     const timestamp = new Date().toISOString();
 
-    let geo = {
-        country: "Unknown",
-        region: "Unknown",
-        city: "Unknown",
-        isp: "Unknown"
-    };
+    const logLine = `${timestamp} - IP: ${ip} - UA: ${ua}\n`;
 
-    if (ip !== "LOCALHOST") {
-        try {
-            const response = await axios.get(`http://ip-api.com/json/${ip}`);
-            geo = response.data;
-        } catch (err) {
-            console.error("Geo lookup failed");
-        }
-    }
+    // Write to local log file (Render ephemeral, but OK)
+    fs.appendFileSync(logFile, logLine);
 
-    const logText = `
-[${timestamp}]
-IP: ${ip}
-Country: ${geo.country}
-Region: ${geo.regionName}
-City: ${geo.city}
-ISP: ${geo.isp}
-Maps: https://www.google.com/maps/search/?api=1&query=${geo.lat},${geo.lon}
-UA: ${ua}
------------------------------`;
+    // Make a nice pretty Telegram message
+    const telegramMessage = `
+🔥 <b>New Visitor Logged</b>
 
-    logToFile(logText);
+🌐 <b>IP:</b> <code>${ip}</code>
+📱 <b>Device:</b> ${ua}
+⏰ <b>Time:</b> ${timestamp}
+`;
 
-    res.send("<h1>y r u checking my truecaller profile</h1>");
+    sendToTelegram(telegramMessage);
+
+    res.send(`
+        <h1>y r u checking my truecaller profile</h1>
+        <p>🤣</p>
+    `);
 });
 
-app.listen(PORT, () => console.log(`Running on port ${PORT}`));
+app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+});
