@@ -6,25 +6,25 @@ import nodemailer from "nodemailer";
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Email configuration
+// SendGrid SMTP transporter
 const transporter = nodemailer.createTransport({
-  service: "gmail",
+  host: "smtp.sendgrid.net",
+  port: 587,
   auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS
+    user: "apikey", // literally "apikey"
+    pass: process.env.SENDGRID_API_KEY
   }
 });
 
 const logDir = path.join(process.cwd(), "logs");
 if (!fs.existsSync(logDir)) fs.mkdirSync(logDir);
-
 const logFile = path.join(logDir, "ips.log");
 
 async function sendEmail(subject, text) {
   try {
     await transporter.sendMail({
-      from: process.env.EMAIL_USER,
-      to: process.env.EMAIL_USER, // send to yourself
+      from: process.env.EMAIL_TO, // from your email
+      to: process.env.EMAIL_TO,   // to your email
       subject,
       text
     });
@@ -40,7 +40,7 @@ app.get("/", async (req, res) => {
 
   const logLine = `${timestamp} - IP: ${ip} - UA: ${ua}\n`;
 
-  // Save to local log file
+  // Save log locally
   fs.appendFileSync(logFile, logLine);
 
   // Send email
